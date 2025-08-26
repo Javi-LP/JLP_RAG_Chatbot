@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chat con Javier AIssistant</title>
+  <title>Chat con AIssistant</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -71,26 +71,76 @@
       return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     }
 
-    function addBubble(role, text){
+    function addBubble(role, html){
       const div = document.createElement('div');
       div.className = `bubble ${role === 'user' ? 'me' : 'bot'}`;
-      div.innerHTML = `${escapeHtml(text)}<span class="time">${nowTime()}</span>`;
+      div.innerHTML = html + `<span class="time">${nowTime()}</span>`;
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
     }
 
-    function escapeHtml(str){
+    function esc(str){
       return str.replace(/[&<>"']/g, (c)=>({
         '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'
       }[c]));
     }
 
-    function typing(on=true){
-      if(on){
-        sendBtn.disabled = true; 
-      } else { 
-        sendBtn.disabled = false; 
+    function typing(on=true){ sendBtn.disabled = !!on; }
+
+    async function requestAgent(message){
+      const controller = new AbortController();
+      const timeout = setTimeout(()=>controller.abort(), 20000); // 20s
+      let res;
+      try{
+        res = await fetch(N8N_WEBHOOK_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/plain;q=0.9, */*;q=0.8'
+          },
+          body: JSON.stringify({ message }),
+          signal: controller.signal
+        });
+      } finally { clearTimeout(timeout); }
+      return res;
+    }
+
+    async function handleResponse(res){
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if(ct.includes('text/event-stream')){
+        // Streaming SSE
+        const bubble = addBubble('assistant', esc('')); // create empty and stream in
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let acc = '';
+        while(true){
+          const {value, done} = await reader.read();
+          if(done) break;
+          const chunk = decoder.decode(value, {stream:true});
+          // parse SSE: lines starting with 'data:'
+          const lines = chunk.split(/\r?\n/);
+          for(const line of lines){
+            if(line.startsWith('data:')){
+              const datum = line.slice(5).trim();
+              if(datum === '[DONE]') continue;
+              acc += datum;
+            }
+          }
+          bubble.innerHTML = esc(acc) + `<span class="time">${nowTime()}</span>`;
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        return;
       }
+      if(ct.includes('application/json')){
+        const data = await res.json();
+        const reply = data.reply || data.text || data.answer || data.message || JSON.stringify(data);
+        addBubble('assistant', esc(reply));
+        return;
+      }
+      // fallback: plain text
+      const text = await res.text();
+      addBubble('assistant', esc(text || '')); 
     }
 
     formEl.addEventListener('submit', async (e)=>{
@@ -99,25 +149,21 @@
       if(!text) return;
       inputEl.value = '';
 
-      addBubble('user', text);
+      addBubble('user', esc(text));
 
       try{
         typing(true);
-        const res = await fetch(N8N_WEBHOOK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
-        });
+        const res = await requestAgent(text);
         if(!res.ok){
-          const t = await res.text();
-          throw new Error('Error HTTP '+res.status+': '+t);
+          const body = await res.text().catch(()=> '');
+          addBubble('assistant', esc(`⚠️ Error ${res.status} ${res.statusText}\n${body}`));
+          return;
         }
-        const data = await res.json();
-        const reply = (data && (data.reply || data.text || data.answer)) || JSON.stringify(data);
-        addBubble('assistant', reply);
+        await handleResponse(res);
       }catch(err){
         console.error(err);
-        addBubble('assistant', '⚠️ No se pudo contactar con el agente. Revisa la consola.');
+        const msg = err?.name === 'AbortError' ? '⚠️ Timeout al llamar al webhook (20s). Revisa CORS/disponibilidad.' : `⚠️ ${err.message || err}`;
+        addBubble('assistant', esc(msg));
       }finally{ typing(false); }
     });
 
