@@ -9,11 +9,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root{
-      --bg:#0f172a; /* slate-900 */
-      --panel:#111827; /* gray-900 */
-      --muted:#94a3b8; /* slate-400 */
-      --accent:#22d3ee; /* cyan-400 */
-      --accent-2:#7c3aed; /* violet-600 */
+      --bg:#0f172a;
+      --muted:#94a3b8;
+      --accent:#22d3ee;
+      --accent-2:#7c3aed;
     }
     *{box-sizing:border-box}
     body{margin:0; font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial; background:linear-gradient(180deg,#0b1023,#0f172a);}    
@@ -36,15 +35,7 @@
     button{border:0; border-radius:12px; padding:10px 14px; font-weight:600; cursor:pointer; color:#0b1220; background:linear-gradient(135deg,var(--accent),#60a5fa)}
     button[disabled]{opacity:.6; cursor:not-allowed}
 
-    /* Side panel */
-    .panel{width:320px; border-left:1px solid rgba(148,163,184,.15); background:rgba(15,23,42,.6); padding:14px; display:flex; flex-direction:column; gap:12px}
-    .panel h2{font-size:14px; margin:4px 0}
-    .row{display:flex; flex-direction:column; gap:6px}
-    .input{width:100%; padding:10px 12px; background:#0b1220; border:1px solid rgba(148,163,184,.2); color:#e5e7eb; border-radius:10px}
-    .help{font-size:12px; color:var(--muted)}
-    .badge{display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#0b1220; background:linear-gradient(135deg,#fef08a,#f472b6); border-radius:999px; padding:4px 10px}
-
-    @media (max-width: 900px){ .chat{flex-direction:column} .panel{width:100%; order:-1; border-left:0; border-top:1px solid rgba(148,163,184,.15)} }
+    @media (max-width: 900px){ .chat{flex-direction:column} }
   </style>
 </head>
 <body>
@@ -65,49 +56,16 @@
           <button id="send" type="submit">Enviar</button>
         </form>
       </section>
-
-      <aside class="panel">
-        <div class="row">
-          <h2>Configuración</h2>
-          <label>
-            <div class="help">URL del Webhook de n8n</div>
-            <input id="webhook" class="input" placeholder="https://tu-n8n.tld/webhook/chat" />
-          </label>
-          <label>
-            <div class="help">Token (opcional, se envía como Authorization: Bearer ...)</div>
-            <input id="token" class="input" placeholder="Pega tu token si tu n8n lo requiere" />
-          </label>
-          <div style="display:flex; gap:8px; align-items:center;">
-            <button type="button" id="saveCfg" title="Guardar en este navegador" style="background:linear-gradient(135deg,#34d399,#22c55e);">Guardar</button>
-            <button type="button" id="clearChat" style="background:linear-gradient(135deg,#fca5a5,#f87171);">Limpiar chat</button>
-            <span class="badge">LocalStorage</span>
-          </div>
-          <p class="help">Nada del chat se envía a terceros excepto a tu endpoint de n8n. No hay servidor intermedio.</p>
-        </div>
-        <div class="row">
-          <h2>Estado</h2>
-          <div id="status" class="help">Listo.</div>
-        </div>
-      </aside>
     </div>
   </div>
 
   <script>
-    // —— Configuración persistente ——
-    const CFG_KEYS = { url: 'https://scavenet.duckdns.org/webhook-test/webhook/chat', token: 'n8n_bearer', history:'chat_history' };
+    const N8N_WEBHOOK_URL = 'https://scavenet.duckdns.org/webhook-test/webhook/chat';
     const $ = (sel) => document.querySelector(sel);
     const messagesEl = $('#messages');
     const inputEl = $('#input');
     const formEl = $('#form');
     const sendBtn = $('#send');
-    const statusEl = $('#status');
-    const webhookEl = $('#webhook');
-    const tokenEl = $('#token');
-
-    // Carga configuración e historial
-    webhookEl.value = localStorage.getItem(CFG_KEYS.url) || '';
-    tokenEl.value = localStorage.getItem(CFG_KEYS.token) || '';
-    const history = JSON.parse(localStorage.getItem(CFG_KEYS.history) || '[]');
 
     function nowTime(){
       return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
@@ -123,110 +81,49 @@
 
     function escapeHtml(str){
       return str.replace(/[&<>"']/g, (c)=>({
-        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'
+        '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'
       }[c]));
     }
 
-    function setStatus(t){ statusEl.textContent = t; }
-
-    function saveHistory(){ localStorage.setItem(CFG_KEYS.history, JSON.stringify(history)); }
-
-    function pushMessage(role, content){ history.push({ role, content, timestamp: Date.now() }); saveHistory(); }
-
     function typing(on=true){
       if(on){
-        sendBtn.disabled = true; setStatus('El agente está escribiendo…');
-      } else { sendBtn.disabled = false; setStatus('Listo.'); }
+        sendBtn.disabled = true; 
+      } else { 
+        sendBtn.disabled = false; 
+      }
     }
 
-    function ensureConfig(){
-      const url = webhookEl.value.trim();
-      if(!url){ alert('Configura la URL del webhook de n8n.'); return null; }
-      return { url, token: tokenEl.value.trim() };
-    }
-
-    // Renderiza historial previo
-    if(history.length){
-      for(const m of history){ addBubble(m.role === 'user' ? 'user' : 'assistant', m.content); }
-    }
-
-    // Guardar configuración
-    $('#saveCfg').addEventListener('click', ()=>{
-      localStorage.setItem(CFG_KEYS.url, webhookEl.value.trim());
-      localStorage.setItem(CFG_KEYS.token, tokenEl.value.trim());
-      setStatus('Configuración guardada en este navegador.');
-    });
-
-    // Limpiar chat
-    $('#clearChat').addEventListener('click', ()=>{
-      localStorage.removeItem(CFG_KEYS.history);
-      while(messagesEl.firstChild) messagesEl.removeChild(messagesEl.firstChild);
-      history.length = 0; setStatus('Historial borrado.');
-    });
-
-    // Envío de mensajes
     formEl.addEventListener('submit', async (e)=>{
       e.preventDefault();
-      const cfg = ensureConfig();
-      if(!cfg) return;
       const text = inputEl.value.trim();
       if(!text) return;
       inputEl.value = '';
 
       addBubble('user', text);
-      pushMessage('user', text);
 
       try{
         typing(true);
-        const res = await fetch(cfg.url, {
+        const res = await fetch(N8N_WEBHOOK_URL, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(cfg.token ? { 'Authorization': `Bearer ${cfg.token}` } : {})
-          },
-          body: JSON.stringify({
-            message: text,
-            history: history.map(({role, content})=>({role, content}))
-          })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
         });
         if(!res.ok){
           const t = await res.text();
           throw new Error('Error HTTP '+res.status+': '+t);
         }
-        // Espera un JSON { reply: string } o {reply: string, meta: any}
         const data = await res.json();
         const reply = (data && (data.reply || data.text || data.answer)) || JSON.stringify(data);
         addBubble('assistant', reply);
-        pushMessage('assistant', reply);
       }catch(err){
         console.error(err);
-        addBubble('assistant', '⚠️ No se pudo contactar con el agente. Revisa la consola y la configuración.');
+        addBubble('assistant', '⚠️ No se pudo contactar con el agente. Revisa la consola.');
       }finally{ typing(false); }
     });
 
-    // UX: Enter para enviar, Shift+Enter para salto de línea
     inputEl.addEventListener('keydown', (e)=>{
       if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); formEl.dispatchEvent(new Event('submit')); }
     });
-
-    // ——— Ejemplo de streaming (comentado) ———
-    // Si tu workflow devuelve text/event-stream o chunks de texto, puedes usar esto.
-    // async function streamFromN8N(cfg, payload){
-    //   const res = await fetch(cfg.url, { method:'POST', headers:{ 'Content-Type':'application/json', ...(cfg.token?{'Authorization':`Bearer ${cfg.token}`}:{}) }, body: JSON.stringify(payload) });
-    //   const reader = res.body.getReader();
-    //   const decoder = new TextDecoder();
-    //   let acc = '';
-    //   let bubble = document.createElement('div');
-    //   bubble.className = 'bubble bot';
-    //   messagesEl.appendChild(bubble);
-    //   while(true){
-    //     const {value, done} = await reader.read(); if(done) break;
-    //     acc += decoder.decode(value, {stream:true});
-    //     bubble.innerHTML = escapeHtml(acc) + `<span class="time">${nowTime()}</span>`;
-    //     messagesEl.scrollTop = messagesEl.scrollHeight;
-    //   }
-    //   pushMessage('assistant', acc);
-    // }
   </script>
 </body>
 </html>
